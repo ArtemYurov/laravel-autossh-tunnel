@@ -1,0 +1,53 @@
+{
+    "name": "artemyurov/laravel-autossh-tunnel",
+    "description": "Modern SSH Tunnel Manager for Laravel with autossh support and automatic lifecycle management",
+    "keywords": [
+        "laravel",
+        "ssh",
+        "tunnel",
+        "autossh",
+        "database",
+        "port-forwarding"
+    ],
+    "type": "library",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Artem Yurov",
+            "email": "artem@yurov.org"
+        }
+    ],
+    "require": {
+        "php": "^8.2",
+        "illuminate/support": "^10.0|^11.0|^12.0",
+        "illuminate/config": "^10.0|^11.0|^12.0",
+        "illuminate/log": "^10.0|^11.0|^12.0",
+        "symfony/process": "^6.0|^7.0"
+    },
+    "require-dev": {
+        "orchestra/testbench": "^9.0|^10.0",
+        "phpunit/phpunit": "^10.0|^11.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "ArtemYurov\\Autossh\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "ArtemYurov\\Autossh\\Tests\\": "tests/"
+        }
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "ArtemYurov\\Autossh\\AutosshTunnelServiceProvider"
+            ],
+            "aliases": {
+                "Tunnel": "ArtemYurov\\Autossh\\Facades\\Tunnel"
+            }
+        }
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}
