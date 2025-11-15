@@ -141,22 +141,26 @@ readonly class TunnelConfig
         }
 
         // Port forwarding (Forward or Reverse)
-        if ($this->type->isForward()) {
-            // Forward tunnel: ssh -L local_port:remote_host:remote_port
-            $parts[] = sprintf(
-                '-L %d:%s:%d',
-                $this->localPort,
-                $this->remoteHost,
-                $this->remotePort
-            );
-        } else {
-            // Reverse tunnel: ssh -R remote_port:remote_host:local_port
-            $parts[] = sprintf(
-                '-R %d:%s:%d',
-                $this->remotePort,
-                $this->remoteHost,
-                $this->localPort
-            );
+        switch ($this->type) {
+            case TunnelType::Forward:
+                // Forward tunnel: ssh -L local_port:remote_host:remote_port
+                $parts[] = sprintf(
+                    '-L %d:%s:%d',
+                    $this->localPort,
+                    $this->remoteHost,
+                    $this->remotePort
+                );
+                break;
+
+            case TunnelType::Reverse:
+                // Reverse tunnel: ssh -R remote_port:remote_host:local_port
+                $parts[] = sprintf(
+                    '-R %d:%s:%d',
+                    $this->remotePort,
+                    $this->remoteHost,
+                    $this->localPort
+                );
+                break;
         }
 
         // SSH connection
