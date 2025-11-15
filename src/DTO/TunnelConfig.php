@@ -19,6 +19,7 @@ readonly class TunnelConfig
      * @param string|null $identityFile Path to SSH key
      * @param string $remoteHost Remote host on SSH server
      * @param int $remotePort Remote port on SSH server
+     * @param string $localHost Local host for database connection (127.0.0.1 or localhost)
      * @param int $localPort Local port for tunnel
      * @param array $sshOptions SSH connection options (key-value pairs, e.g. ['StrictHostKeyChecking' => 'no'])
      */
@@ -30,6 +31,7 @@ readonly class TunnelConfig
         public ?string $identityFile = null,
         public string $remoteHost = 'localhost',
         public int $remotePort = 5432,
+        public string $localHost = '127.0.0.1',
         public int $localPort = 15432,
         public array $sshOptions = [],
     ) {

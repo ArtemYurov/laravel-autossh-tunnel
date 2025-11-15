@@ -67,6 +67,7 @@ class Tunnel
             identityFile: $connectionConfig['identity_file'] ?? null,
             remoteHost: $connectionConfig['remote_host'] ?? 'localhost',
             remotePort: $connectionConfig['remote_port'] ?? 5432,
+            localHost: $connectionConfig['local_host'] ?? '127.0.0.1',
             localPort: $connectionConfig['local_port'] ?? 15432,
             sshOptions: $connectionConfig['ssh_options'] ?? [],
         );
@@ -96,7 +97,7 @@ class Tunnel
     {
         $this->connectionName = $connectionName;
         $this->databaseConfig = array_merge($config, [
-            'host' => '127.0.0.1',
+            'host' => $this->config->localHost,
             'port' => $this->config->localPort,
         ]);
 

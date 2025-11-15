@@ -38,6 +38,7 @@ return [
             'identity_file' => env('TUNNEL_SSH_KEY'),
             'remote_host' => env('TUNNEL_REMOTE_HOST', 'localhost'),
             'remote_port' => env('TUNNEL_REMOTE_PORT', 5432),
+            'local_host' => env('TUNNEL_LOCAL_HOST', '127.0.0.1'),
             'local_port' => env('TUNNEL_LOCAL_PORT', 15432),
             'ssh_options' => [
                 'StrictHostKeyChecking' => env('TUNNEL_SSH_STRICT_HOST_KEY_CHECKING', false),
@@ -58,6 +59,7 @@ return [
             'identity_file' => env('WEBHOOK_SSH_KEY'),
             'remote_host' => env('WEBHOOK_REMOTE_HOST', 'localhost'),
             'remote_port' => env('WEBHOOK_REMOTE_PORT', 8080),
+            'local_host' => env('WEBHOOK_LOCAL_HOST', '127.0.0.1'),
             'local_port' => env('WEBHOOK_LOCAL_PORT', 8000),
             'ssh_options' => [
                 'StrictHostKeyChecking' => env('WEBHOOK_SSH_STRICT_HOST_KEY_CHECKING', false),
