@@ -43,14 +43,35 @@ class Tunnel
      *
      * @param string|null $name Connection name from config/tunnel.php
      * @return self
+     * @throws \ArtemYurov\Autossh\Exceptions\TunnelConfigException
      */
     public static function connection(?string $name = null): self
     {
         $name = $name ?: config('tunnel.default');
+
+        if (!$name) {
+            throw new \ArtemYurov\Autossh\Exceptions\TunnelConfigException(
+                'Tunnel connection name not specified and default connection not configured'
+            );
+        }
+
         $connectionConfig = config("tunnel.connections.{$name}");
 
         if (!$connectionConfig) {
-            throw new \InvalidArgumentException("Tunnel connection '{$name}' not found in config");
+            throw new \ArtemYurov\Autossh\Exceptions\TunnelConfigException(
+                "Tunnel connection '{$name}' not found in config/tunnel.php. " .
+                "Available connections: " . implode(', ', array_keys(config('tunnel.connections', [])))
+            );
+        }
+
+        // Validate required configuration parameters
+        $requiredParams = ['user', 'host'];
+        foreach ($requiredParams as $param) {
+            if (empty($connectionConfig[$param])) {
+                throw new \ArtemYurov\Autossh\Exceptions\TunnelConfigException(
+                    "Required parameter '{$param}' is missing in tunnel connection '{$name}'"
+                );
+            }
         }
 
         // Parse tunnel type
@@ -117,6 +138,14 @@ class Tunnel
             return $this->connection;
         }
 
+        // Check if local port is already in use
+        if ($this->isPortInUse($this->config->localHost, $this->config->localPort)) {
+            throw new TunnelConnectionException(
+                "Local port {$this->config->localPort} is already in use. " .
+                "Tunnel may already be active or port is used by another process."
+            );
+        }
+
         $this->connection = new TunnelConnection($this->config);
         $this->connection->start();
 
@@ -126,6 +155,25 @@ class Tunnel
         }
 
         return $this->connection;
+    }
+
+    /**
+     * Check if port is in use
+     *
+     * @param string $host Host to check
+     * @param int $port Port to check
+     * @return bool
+     */
+    protected function isPortInUse(string $host, int $port): bool
+    {
+        $connection = @fsockopen($host, $port, $errno, $errstr, 1);
+
+        if ($connection) {
+            fclose($connection);
+            return true;
+        }
+
+        return false;
     }
 
     /**

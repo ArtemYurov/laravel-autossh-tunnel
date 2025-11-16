@@ -145,9 +145,11 @@ readonly class TunnelConfig
         // Port forwarding (Forward or Reverse)
         switch ($this->type) {
             case TunnelType::Forward:
-                // Forward tunnel: ssh -L local_port:remote_host:remote_port
+                // Forward tunnel: ssh -L [bind_address:]local_port:remote_host:remote_port
+                // Bind address included to force IPv4/IPv6 preference
                 $parts[] = sprintf(
-                    '-L %d:%s:%d',
+                    '-L %s:%d:%s:%d',
+                    $this->localHost,
                     $this->localPort,
                     $this->remoteHost,
                     $this->remotePort
@@ -155,9 +157,10 @@ readonly class TunnelConfig
                 break;
 
             case TunnelType::Reverse:
-                // Reverse tunnel: ssh -R remote_port:remote_host:local_port
+                // Reverse tunnel: ssh -R [bind_address:]remote_port:remote_host:local_port
                 $parts[] = sprintf(
-                    '-R %d:%s:%d',
+                    '-R %s:%d:%s:%d',
+                    $this->localHost,
                     $this->remotePort,
                     $this->remoteHost,
                     $this->localPort

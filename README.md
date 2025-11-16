@@ -477,6 +477,105 @@ try {
 }
 ```
 
+## Important Notes
+
+### MySQL/MariaDB: localhost vs 127.0.0.1
+
+**Critical:** In MySQL and MariaDB, `localhost` has a special hardcoded meaning - it **always** represents a Unix socket connection, **not** a TCP/IP connection. This behavior cannot be changed.
+
+#### The Difference
+
+- **`localhost`** → Unix socket connection (`/var/run/mysqld/mysqld.sock`)
+- **`127.0.0.1`** → TCP/IP connection over loopback interface
+
+When using SSH tunnels with MySQL/MariaDB:
+
+```php
+// ❌ WRONG - Will attempt Unix socket, not tunnel
+Tunnel::connection('mysql_tunnel')
+    ->withDatabaseConnection('mysql_remote', [
+        'driver' => 'mysql',
+        'host' => 'localhost',  // ❌ Unix socket
+        'port' => 13306,
+    ]);
+
+// ✅ CORRECT - Will use TCP/IP through tunnel
+Tunnel::connection('mysql_tunnel')
+    ->withDatabaseConnection('mysql_remote', [
+        'driver' => 'mysql',
+        'host' => '127.0.0.1',  // ✅ TCP/IP
+        'port' => 13306,
+    ]);
+```
+
+#### Configuration Example
+
+**Environment Variables:**
+```env
+# Remote database credentials
+MYSQL_REMOTE_HOST=127.0.0.1  # ✅ Use 127.0.0.1, not localhost
+MYSQL_REMOTE_PORT=3306
+MYSQL_REMOTE_DATABASE=mydb
+MYSQL_REMOTE_USERNAME=myuser
+MYSQL_REMOTE_PASSWORD=secret
+
+# SSH Tunnel settings
+MYSQL_SSH_USER=sshuser
+MYSQL_SSH_HOST=remote-server.com
+MYSQL_SSH_PORT=22
+
+# Local tunnel bind
+MYSQL_LOCAL_HOST=127.0.0.1  # ✅ Bind to specific IPv4 address
+MYSQL_LOCAL_PORT=13306
+```
+
+**Tunnel Configuration:**
+```php
+// config/tunnel.php
+'mysql_remote' => [
+    'type' => 'forward',
+    'user' => env('MYSQL_SSH_USER'),
+    'host' => env('MYSQL_SSH_HOST'),
+    'port' => env('MYSQL_SSH_PORT', 22),
+
+    // ✅ IMPORTANT: Use 127.0.0.1 for MySQL/MariaDB
+    'remote_host' => env('MYSQL_REMOTE_HOST', '127.0.0.1'),
+    'remote_port' => env('MYSQL_REMOTE_PORT', 3306),
+    'local_host' => env('MYSQL_LOCAL_HOST', '127.0.0.1'),
+    'local_port' => env('MYSQL_LOCAL_PORT', 13306),
+],
+```
+
+#### Database User Permissions
+
+MySQL/MariaDB treat `user@localhost` and `user@127.0.0.1` as **different users**:
+
+```sql
+-- Unix socket access (localhost means socket)
+CREATE USER 'myuser'@'localhost' IDENTIFIED BY 'password';
+
+-- TCP/IP access (required for SSH tunnels)
+CREATE USER 'myuser'@'127.0.0.1' IDENTIFIED BY 'password';
+
+-- Grant permissions
+GRANT ALL PRIVILEGES ON mydb.* TO 'myuser'@'127.0.0.1';
+FLUSH PRIVILEGES;
+```
+
+**Important:** When using SSH tunnels to access remote MySQL/MariaDB:
+1. Create database user with `@127.0.0.1` host (not `@localhost`)
+2. Set `remote_host` to `127.0.0.1` in tunnel config
+3. Use `'host' => '127.0.0.1'` in database connection config
+
+#### Why This Matters
+
+This issue commonly occurs when:
+- Remote server's `localhost` resolves to IPv6 (`::1`)
+- Database user only has `@localhost` (Unix socket) permissions
+- Database rejects connections: "Host '::1' is not allowed to connect"
+
+**Solution:** Always use `127.0.0.1` for both `remote_host` in tunnel config and database connection host when working with MySQL/MariaDB over SSH tunnels.
+
 ## API Reference
 
 ### Artisan Commands
