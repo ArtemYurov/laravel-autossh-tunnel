@@ -138,34 +138,39 @@ class Tunnel
             return $this->connection;
         }
 
-        // Check if local port is already in use
-        if ($this->isPortInUse($this->config->localHost, $this->config->localPort)) {
-            // Пытаемся переиспользовать существующий туннель
-            $existingPid = $this->findExistingTunnelProcess();
+        // Проверяем наличие существующего туннеля через PID файл
+        $existingPid = $this->findExistingTunnelProcess();
 
-            if ($existingPid) {
-                Log::info("Found existing SSH tunnel on port {$this->config->localPort} (PID: {$existingPid}), reusing it");
+        if ($existingPid) {
+            Log::info("Found existing SSH tunnel (PID: {$existingPid}), reusing it");
 
-                // Создаём фиктивное подключение для существующего туннеля
-                $this->connection = new TunnelConnection($this->config);
-                $this->connection->setExistingPid($existingPid);
+            // Создаём фиктивное подключение для существующего туннеля
+            $this->connection = new TunnelConnection($this->config);
+            $this->connection->setExistingPid($existingPid);
 
-                // Регистрируем DB connection для существующего туннеля
-                if ($this->connectionName && $this->databaseConfig) {
-                    $this->registerDatabaseConnection();
-                }
-
-                return $this->connection;
+            // Регистрируем DB connection для существующего туннеля
+            if ($this->connectionName && $this->databaseConfig) {
+                $this->registerDatabaseConnection();
             }
 
-            throw new TunnelConnectionException(
-                "Local port {$this->config->localPort} is already in use. " .
-                "Tunnel may already be active or port is used by another process."
-            );
+            return $this->connection;
         }
 
+        // Создаём новый туннель
         $this->connection = new TunnelConnection($this->config);
+
+        // Устанавливаем callback для удаления PID файла при остановке
+        $this->connection->setOnStopCallback(function() {
+            $this->removePidFile();
+        });
+
         $this->connection->start();
+
+        // Сохраняем PID в файл
+        $pid = $this->connection->getPid();
+        if ($pid) {
+            $this->savePidFile($pid);
+        }
 
         // Register database connection if specified
         if ($this->connectionName && $this->databaseConfig) {
@@ -173,6 +178,82 @@ class Tunnel
         }
 
         return $this->connection;
+    }
+
+    /**
+     * Получить путь к директории для хранения PID файлов
+     *
+     * @return string
+     */
+    protected function getPidDirectory(): string
+    {
+        $dir = sys_get_temp_dir() . '/laravel-autossh-tunnel';
+
+        if (!is_dir($dir)) {
+            mkdir($dir, 0755, true);
+        }
+
+        return $dir;
+    }
+
+    /**
+     * Получить путь к PID файлу для данного туннеля
+     *
+     * @return string
+     */
+    protected function getPidFilePath(): string
+    {
+        return $this->getPidDirectory() . '/' . $this->config->getIdentifier() . '.pid';
+    }
+
+    /**
+     * Сохранить PID в файл
+     *
+     * @param int $pid
+     * @return void
+     */
+    protected function savePidFile(int $pid): void
+    {
+        $pidFile = $this->getPidFilePath();
+        file_put_contents($pidFile, $pid);
+
+        Log::debug("Saved PID file", [
+            'path' => $pidFile,
+            'pid' => $pid,
+        ]);
+    }
+
+    /**
+     * Удалить PID файл
+     *
+     * @return void
+     */
+    protected function removePidFile(): void
+    {
+        $pidFile = $this->getPidFilePath();
+
+        if (file_exists($pidFile)) {
+            unlink($pidFile);
+            Log::debug("Removed PID file", ['path' => $pidFile]);
+        }
+    }
+
+    /**
+     * Прочитать PID из файла
+     *
+     * @return int|null
+     */
+    protected function readPidFile(): ?int
+    {
+        $pidFile = $this->getPidFilePath();
+
+        if (!file_exists($pidFile)) {
+            return null;
+        }
+
+        $pid = (int) trim(file_get_contents($pidFile));
+
+        return $pid > 0 ? $pid : null;
     }
 
     /**
@@ -195,34 +276,51 @@ class Tunnel
     }
 
     /**
-     * Найти существующий SSH процесс туннеля на указанном порту
+     * Найти существующий SSH туннель
+     * Проверяет: 1) наличие PID файла, 2) существование процесса, 3) доступность порта
      *
      * @return int|null PID процесса или null если не найден
      */
     protected function findExistingTunnelProcess(): ?int
     {
-        $port = $this->config->localPort;
+        // Шаг 1: Читаем PID из файла
+        $pid = $this->readPidFile();
 
-        // Используем lsof для поиска процесса на порту
-        $command = "lsof -ti:{$port} 2>/dev/null | head -1";
-        $pid = (int) trim(shell_exec($command));
-
-        if ($pid <= 0) {
+        if (!$pid) {
+            Log::debug('No PID file found for this tunnel');
             return null;
         }
 
-        // Проверяем что процесс запущен
+        Log::debug("Found PID file with PID: {$pid}");
+
+        // Шаг 2: Проверяем что процесс запущен
         if (!$this->isProcessRunning($pid)) {
+            Log::warning("Process {$pid} from PID file is not running, cleaning up");
+            $this->removePidFile();
             return null;
         }
 
-        // Проверяем что это SSH процесс
+        // Шаг 3: Проверяем что это SSH процесс
         $processName = trim(shell_exec("ps -p {$pid} -o comm= 2>/dev/null"));
 
         if (strpos($processName, 'ssh') === false) {
-            Log::warning("Port {$port} is occupied by non-SSH process '{$processName}' (PID: {$pid})");
+            Log::warning("Process {$pid} is not an SSH process ('{$processName}'), cleaning up");
+            $this->removePidFile();
             return null;
         }
+
+        // Шаг 4: Проверяем что порт доступен
+        if (!$this->isPortInUse($this->config->localHost, $this->config->localPort)) {
+            Log::warning("SSH process {$pid} exists but port {$this->config->localPort} is not accessible, cleaning up");
+            $this->removePidFile();
+            return null;
+        }
+
+        Log::info("Valid existing SSH tunnel found", [
+            'pid' => $pid,
+            'port' => $this->config->localPort,
+            'process' => $processName,
+        ]);
 
         return $pid;
     }

@@ -15,10 +15,23 @@ class TunnelConnection
     protected ?Process $process = null;
     protected bool $isRunning = false;
     protected ?int $existingPid = null; // PID существующего туннеля (не созданного нами)
+    protected $onStopCallback = null; // Callback вызываемый при остановке туннеля
 
     public function __construct(
         protected readonly TunnelConfig $config
     ) {
+    }
+
+    /**
+     * Установить callback для вызова при остановке туннеля
+     *
+     * @param callable $callback
+     * @return self
+     */
+    public function setOnStopCallback(callable $callback): self
+    {
+        $this->onStopCallback = $callback;
+        return $this;
     }
 
     /**
@@ -136,6 +149,11 @@ class TunnelConnection
             }
 
             $this->isRunning = false;
+
+            // Вызываем callback для очистки (например, удаления PID файла)
+            if ($this->onStopCallback) {
+                call_user_func($this->onStopCallback);
+            }
 
             Log::info('SSH tunnel stopped successfully');
         } catch (\Exception $e) {

@@ -221,6 +221,26 @@ readonly class TunnelConfig
     }
 
     /**
+     * Get unique identifier for this tunnel configuration
+     * Used for PID file naming
+     *
+     * @return string
+     */
+    public function getIdentifier(): string
+    {
+        return md5(sprintf(
+            '%s_%s_%d_%s_%d_%s_%d',
+            $this->type->value,
+            $this->user,
+            $this->port,
+            $this->host,
+            $this->localPort,
+            $this->remoteHost,
+            $this->remotePort
+        ));
+    }
+
+    /**
      * Get string representation of configuration
      *
      * @return string
