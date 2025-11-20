@@ -300,4 +300,20 @@ class Tunnel
     {
         return $this->connection;
     }
+
+    /**
+     * Убедиться что туннель активен, переподключиться если нужно
+     *
+     * @param int $maxAttempts Максимальное количество попыток переподключения
+     * @return bool
+     */
+    public function ensureConnected(int $maxAttempts = 3): bool
+    {
+        if (!$this->connection) {
+            Log::warning('Tunnel connection not initialized');
+            return false;
+        }
+
+        return $this->connection->ensureConnected($maxAttempts);
+    }
 }

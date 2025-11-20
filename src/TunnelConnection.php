@@ -152,11 +152,88 @@ class TunnelConnection
      */
     public function verifyConnection(): bool
     {
+        // Если это существующий туннель - проверяем только порт
+        if ($this->existingPid) {
+            return $this->isPortInUse($this->config->localPort);
+        }
+
         if (!$this->process || !$this->process->isRunning()) {
             return false;
         }
 
         return $this->isPortInUse($this->config->localPort);
+    }
+
+    /**
+     * Восстановить туннель если он отвалился
+     *
+     * @param int $maxAttempts Максимальное количество попыток
+     * @return bool Успешно ли восстановлен
+     */
+    public function ensureConnected(int $maxAttempts = 3): bool
+    {
+        if ($this->verifyConnection()) {
+            return true;
+        }
+
+        Log::warning('SSH tunnel connection lost, attempting to reconnect...', [
+            'config' => (string) $this->config,
+        ]);
+
+        // Если это был существующий туннель - не пытаемся его восстановить
+        if ($this->existingPid) {
+            Log::error('External SSH tunnel is down, cannot reconnect', [
+                'pid' => $this->existingPid,
+            ]);
+            return false;
+        }
+
+        for ($attempt = 1; $attempt <= $maxAttempts; $attempt++) {
+            try {
+                Log::info("Reconnection attempt {$attempt}/{$maxAttempts}");
+
+                // Останавливаем старое соединение если оно есть
+                if ($this->process && $this->process->isRunning()) {
+                    $this->process->stop();
+                }
+
+                // Ждём освобождения порта
+                $waitAttempts = 0;
+                while ($this->isPortInUse($this->config->localPort) && $waitAttempts < 10) {
+                    sleep(1);
+                    $waitAttempts++;
+                }
+
+                // Создаём новое соединение
+                $sshCommand = $this->config->getSshCommand($this->isAutosshAvailable());
+
+                $this->process = Process::fromShellCommandline($sshCommand);
+                $this->process->setTimeout(null);
+                $this->process->start();
+
+                sleep(2);
+
+                if ($this->verifyConnection()) {
+                    $this->isRunning = true;
+                    Log::info('SSH tunnel reconnected successfully', [
+                        'pid' => $this->process->getPid(),
+                        'attempt' => $attempt,
+                    ]);
+                    return true;
+                }
+            } catch (\Exception $e) {
+                Log::error("Reconnection attempt {$attempt} failed", [
+                    'error' => $e->getMessage(),
+                ]);
+            }
+
+            if ($attempt < $maxAttempts) {
+                sleep(2);
+            }
+        }
+
+        Log::error('Failed to reconnect SSH tunnel after all attempts');
+        return false;
     }
 
     /**
