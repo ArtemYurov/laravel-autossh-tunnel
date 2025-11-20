@@ -140,6 +140,24 @@ class Tunnel
 
         // Check if local port is already in use
         if ($this->isPortInUse($this->config->localHost, $this->config->localPort)) {
+            // Пытаемся переиспользовать существующий туннель
+            $existingPid = $this->findExistingTunnelProcess();
+
+            if ($existingPid) {
+                Log::info("Found existing SSH tunnel on port {$this->config->localPort} (PID: {$existingPid}), reusing it");
+
+                // Создаём фиктивное подключение для существующего туннеля
+                $this->connection = new TunnelConnection($this->config);
+                $this->connection->setExistingPid($existingPid);
+
+                // Регистрируем DB connection для существующего туннеля
+                if ($this->connectionName && $this->databaseConfig) {
+                    $this->registerDatabaseConnection();
+                }
+
+                return $this->connection;
+            }
+
             throw new TunnelConnectionException(
                 "Local port {$this->config->localPort} is already in use. " .
                 "Tunnel may already be active or port is used by another process."
@@ -174,6 +192,55 @@ class Tunnel
         }
 
         return false;
+    }
+
+    /**
+     * Найти существующий SSH процесс туннеля на указанном порту
+     *
+     * @return int|null PID процесса или null если не найден
+     */
+    protected function findExistingTunnelProcess(): ?int
+    {
+        $port = $this->config->localPort;
+
+        // Используем lsof для поиска процесса на порту
+        $command = "lsof -ti:{$port} 2>/dev/null | head -1";
+        $pid = (int) trim(shell_exec($command));
+
+        if ($pid <= 0) {
+            return null;
+        }
+
+        // Проверяем что процесс запущен
+        if (!$this->isProcessRunning($pid)) {
+            return null;
+        }
+
+        // Проверяем что это SSH процесс
+        $processName = trim(shell_exec("ps -p {$pid} -o comm= 2>/dev/null"));
+
+        if (strpos($processName, 'ssh') === false) {
+            Log::warning("Port {$port} is occupied by non-SSH process '{$processName}' (PID: {$pid})");
+            return null;
+        }
+
+        return $pid;
+    }
+
+    /**
+     * Проверка запущен ли процесс
+     *
+     * @param int $pid
+     * @return bool
+     */
+    protected function isProcessRunning(int $pid): bool
+    {
+        if (function_exists('posix_getpgid')) {
+            return posix_getpgid($pid) !== false;
+        }
+
+        // Fallback для систем без posix
+        return file_exists("/proc/{$pid}");
     }
 
     /**

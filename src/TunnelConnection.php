@@ -14,6 +14,7 @@ class TunnelConnection
 {
     protected ?Process $process = null;
     protected bool $isRunning = false;
+    protected ?int $existingPid = null; // PID существующего туннеля (не созданного нами)
 
     public function __construct(
         protected readonly TunnelConfig $config
@@ -111,6 +112,12 @@ class TunnelConnection
      */
     public function stop(): void
     {
+        // Если это существующий туннель (не созданный нами) - не останавливаем его
+        if ($this->existingPid) {
+            Log::debug("Not stopping existing SSH tunnel (PID: {$this->existingPid}), it was created by another process");
+            return;
+        }
+
         if (!$this->isRunning || !$this->process) {
             return;
         }
@@ -171,13 +178,32 @@ class TunnelConnection
     }
 
     /**
+     * Установить PID существующего туннеля
+     *
+     * @param int $pid
+     * @return $this
+     */
+    public function setExistingPid(int $pid): self
+    {
+        $this->existingPid = $pid;
+        $this->isRunning = true;
+
+        Log::info("Using existing SSH tunnel", [
+            'pid' => $pid,
+            'local_port' => $this->config->localPort,
+        ]);
+
+        return $this;
+    }
+
+    /**
      * Get tunnel process PID
      *
      * @return int|null
      */
     public function getPid(): ?int
     {
-        return $this->process?->getPid();
+        return $this->existingPid ?? $this->process?->getPid();
     }
 
     /**
