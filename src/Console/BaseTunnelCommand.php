@@ -17,8 +17,15 @@ abstract class BaseTunnelCommand extends Command
     protected function showAvailableConnections(): void
     {
         $availableConnections = array_keys(config('tunnel.connections', []));
-        if (!empty($availableConnections)) {
+
+        $this->newLine();
+
+        if (empty($availableConnections)) {
+            $this->warn("Configuration file config/tunnel.php not found or empty.");
             $this->newLine();
+            $this->info("Please publish the configuration file:");
+            $this->line("  php artisan vendor:publish --tag=tunnel-config");
+        } else {
             $this->info("Available tunnel connections in config/tunnel.php:");
             foreach ($availableConnections as $connection) {
                 $this->line("  - {$connection}");
