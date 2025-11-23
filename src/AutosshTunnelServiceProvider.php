@@ -52,6 +52,8 @@ class AutosshTunnelServiceProvider extends ServiceProvider
                 \ArtemYurov\Autossh\Console\TunnelStartCommand::class,
                 \ArtemYurov\Autossh\Console\TunnelStopCommand::class,
                 \ArtemYurov\Autossh\Console\TunnelStatusCommand::class,
+                \ArtemYurov\Autossh\Console\TunnelReuseCommand::class,
+                \ArtemYurov\Autossh\Console\TunnelDiagnoseCommand::class,
             ]);
         }
     }
