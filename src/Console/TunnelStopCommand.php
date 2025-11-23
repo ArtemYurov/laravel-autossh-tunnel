@@ -3,9 +3,8 @@
 namespace ArtemYurov\Autossh\Console;
 
 use ArtemYurov\Autossh\TunnelManager;
-use Illuminate\Console\Command;
 
-class TunnelStopCommand extends Command
+class TunnelStopCommand extends BaseTunnelCommand
 {
     protected $signature = 'tunnel:stop
                             {connection? : The tunnel connection name to stop}
@@ -28,21 +27,19 @@ class TunnelStopCommand extends Command
 
     protected function stopTunnel(string $connectionName, TunnelManager $manager): int
     {
+        // Check if tunnel exists in configuration
+        $availableConnections = array_keys(config('tunnel.connections', []));
+        if (!in_array($connectionName, $availableConnections)) {
+            $this->error("Tunnel '{$connectionName}' does not exist in configuration.");
+            $this->showAvailableConnections();
+            return self::FAILURE;
+        }
+
+        // Check if tunnel is running
         $info = $manager->getTunnelInfo($connectionName);
 
         if (!$info) {
             $this->error("Tunnel '{$connectionName}' is not running.");
-
-            // Show available configured tunnels
-            $availableConnections = array_keys(config('tunnel.connections', []));
-            if (!empty($availableConnections)) {
-                $this->newLine();
-                $this->info("Available tunnel connections in config/tunnel.php:");
-                foreach ($availableConnections as $connection) {
-                    $this->line("  - {$connection}");
-                }
-            }
-
             return self::FAILURE;
         }
 

@@ -59,8 +59,7 @@ class Tunnel
 
         if (!$connectionConfig) {
             throw new \ArtemYurov\Autossh\Exceptions\TunnelConfigException(
-                "Tunnel connection '{$name}' not found in config/tunnel.php. " .
-                "Available connections: " . implode(', ', array_keys(config('tunnel.connections', [])))
+                "Tunnel connection '{$name}' does not exist in configuration."
             );
         }
 

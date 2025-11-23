@@ -3,9 +3,8 @@
 namespace ArtemYurov\Autossh\Console;
 
 use ArtemYurov\Autossh\TunnelManager;
-use Illuminate\Console\Command;
 
-class TunnelStatusCommand extends Command
+class TunnelStatusCommand extends BaseTunnelCommand
 {
     protected $signature = 'tunnel:status
                             {connection? : The tunnel connection name to check}
