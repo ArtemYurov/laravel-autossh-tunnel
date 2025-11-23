@@ -4,6 +4,8 @@ namespace ArtemYurov\Autossh;
 
 use ArtemYurov\Autossh\DTO\TunnelConfig;
 use ArtemYurov\Autossh\Exceptions\TunnelConnectionException;
+use ArtemYurov\Autossh\Services\ConnectionValidator;
+use ArtemYurov\Autossh\Services\RetryManager;
 use Illuminate\Support\Facades\Log;
 use Symfony\Component\Process\Process;
 
@@ -14,8 +16,12 @@ class TunnelConnection
 {
     protected ?Process $process = null;
     protected bool $isRunning = false;
-    protected ?int $existingPid = null; // PID существующего туннеля (не созданного нами)
-    protected $onStopCallback = null; // Callback вызываемый при остановке туннеля
+    protected ?int $existingPid = null; // PID of existing tunnel (not created by us)
+    protected $onStopCallback = null; // Callback called when tunnel stops
+    protected bool $keepAlive = false; // Keep tunnel running after script ends
+    protected bool $signalHandlersSetup = false; // Flag indicating signal handlers are set up
+    protected ?ConnectionValidator $validator = null;
+    protected ?RetryManager $retryManager = null;
 
     public function __construct(
         protected readonly TunnelConfig $config
@@ -349,10 +355,177 @@ class TunnelConnection
     }
 
     /**
+     * Set keep-alive flag (don't close tunnel when script ends)
+     *
+     * @param bool $keepAlive
+     * @return $this
+     */
+    public function withKeepAlive(bool $keepAlive = true): self
+    {
+        $this->keepAlive = $keepAlive;
+        return $this;
+    }
+
+    /**
+     * Set up system signal handlers (SIGINT, SIGTERM)
+     *
+     * Tunnel will be properly closed when signal is received
+     *
+     * @return $this
+     */
+    public function setupSignalHandlers(): self
+    {
+        if ($this->signalHandlersSetup) {
+            return $this;
+        }
+
+        if (!function_exists('pcntl_signal')) {
+            Log::warning('pcntl extension not available, signal handlers not set up');
+            return $this;
+        }
+
+        $handler = function (int $signal) {
+            Log::info("Received signal {$signal}, closing tunnel...");
+            $this->stop();
+            exit(0);
+        };
+
+        pcntl_signal(SIGINT, $handler);
+        pcntl_signal(SIGTERM, $handler);
+
+        $this->signalHandlersSetup = true;
+
+        Log::debug('Signal handlers set up for SSH tunnel');
+
+        return $this;
+    }
+
+    /**
+     * Validate database accessibility through database connection
+     *
+     * Executes SELECT 1 to verify real database connection
+     *
+     * @param string $connectionName Database connection name
+     * @param int $timeout Timeout in seconds
+     * @return bool true if database is accessible
+     */
+    public function validateDatabase(string $connectionName, int $timeout = 5): bool
+    {
+        $validator = $this->getValidator();
+        return $validator->isDatabaseAccessible($connectionName, $timeout);
+    }
+
+    /**
+     * Wait for database availability with retries
+     *
+     * @param string $connectionName
+     * @param int $maxAttempts
+     * @param int $delaySeconds
+     * @return bool
+     */
+    public function waitForDatabase(string $connectionName, int $maxAttempts = 5, int $delaySeconds = 2): bool
+    {
+        $validator = $this->getValidator();
+        return $validator->waitForDatabase($connectionName, $maxAttempts, $delaySeconds);
+    }
+
+    /**
+     * Execute operation with automatic retry on connection errors
+     *
+     * @param callable $operation Operation to execute
+     * @param int|null $maxAttempts Maximum attempts (null = from config)
+     * @return mixed Operation result
+     * @throws \Exception
+     */
+    public function executeWithRetry(callable $operation, ?int $maxAttempts = null)
+    {
+        $retryManager = $this->getRetryManager();
+
+        if ($maxAttempts !== null) {
+            $retryManager->setMaxAttempts($maxAttempts);
+        }
+
+        // Set up reconnect callback
+        $retryManager->setReconnectCallback(function () {
+            Log::info('Attempting to reconnect tunnel...');
+            $this->ensureConnected();
+        });
+
+        return $retryManager->execute($operation, function (\Exception $e) {
+            // Retry only for connection-related errors
+            $message = strtolower($e->getMessage());
+            return str_contains($message, 'connection') ||
+                   str_contains($message, 'lost') ||
+                   str_contains($message, 'gone away');
+        });
+    }
+
+    /**
+     * Full tunnel validation (process + port + database)
+     *
+     * @param string|null $connectionName Database connection to check (optional)
+     * @return array ['valid' => bool, 'errors' => array]
+     */
+    public function validate(?string $connectionName = null): array
+    {
+        $validator = $this->getValidator();
+
+        $pid = $this->getPid();
+        if (!$pid) {
+            return [
+                'valid' => false,
+                'errors' => ['Tunnel PID not found'],
+            ];
+        }
+
+        return $validator->validateTunnel($pid, $this->config->localPort, $connectionName);
+    }
+
+    /**
+     * Get ConnectionValidator (lazy initialization)
+     *
+     * @return ConnectionValidator
+     */
+    protected function getValidator(): ConnectionValidator
+    {
+        if ($this->validator === null) {
+            $this->validator = new ConnectionValidator();
+        }
+
+        return $this->validator;
+    }
+
+    /**
+     * Get RetryManager (lazy initialization)
+     *
+     * @return RetryManager
+     */
+    protected function getRetryManager(): RetryManager
+    {
+        if ($this->retryManager === null) {
+            $this->retryManager = new RetryManager();
+
+            // Default settings
+            $this->retryManager->setMaxAttempts(3);
+            $this->retryManager->setDelay(2);
+        }
+
+        return $this->retryManager;
+    }
+
+    /**
      * Automatically close tunnel on object destruction
      */
     public function __destruct()
     {
+        // Don't close tunnel if keep-alive is set
+        if ($this->keepAlive) {
+            Log::info('Tunnel keep-alive enabled, not closing on destruct', [
+                'pid' => $this->getPid(),
+            ]);
+            return;
+        }
+
         $this->stop();
     }
 }

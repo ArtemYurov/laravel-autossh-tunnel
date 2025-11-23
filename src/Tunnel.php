@@ -4,6 +4,7 @@ namespace ArtemYurov\Autossh;
 
 use ArtemYurov\Autossh\DTO\TunnelConfig;
 use ArtemYurov\Autossh\Exceptions\TunnelConnectionException;
+use ArtemYurov\Autossh\Services\ProcessManager;
 use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Log;
 
@@ -32,10 +33,25 @@ class Tunnel
     protected ?TunnelConnection $connection = null;
     protected ?array $databaseConfig = null;
     protected ?string $connectionName = null;
+    protected ?ProcessManager $processManager = null;
 
     public function __construct(
         protected readonly TunnelConfig $config
     ) {
+    }
+
+    /**
+     * Get ProcessManager instance (lazy initialization)
+     *
+     * @return ProcessManager
+     */
+    protected function getProcessManager(): ProcessManager
+    {
+        if ($this->processManager === null) {
+            $this->processManager = new ProcessManager();
+        }
+
+        return $this->processManager;
     }
 
     /**
@@ -399,9 +415,98 @@ class Tunnel
     }
 
     /**
-     * Убедиться что туннель активен, переподключиться если нужно
+     * Find existing tunnel by port using lsof
      *
-     * @param int $maxAttempts Максимальное количество попыток переподключения
+     * Unlike findExistingTunnelProcess(), this method doesn't rely on PID file
+     * but finds process directly by occupied port using lsof/netstat
+     *
+     * @return int|null PID of existing tunnel or null
+     */
+    public function findExistingByPort(): ?int
+    {
+        $processManager = $this->getProcessManager();
+
+        // Find process occupying the tunnel's local port
+        $pid = $processManager->findProcessByPort($this->config->localPort);
+
+        if (!$pid) {
+            Log::debug("No process found on port {$this->config->localPort}");
+            return null;
+        }
+
+        // Verify it's SSH process
+        if (!$processManager->isSshProcess($pid)) {
+            $info = $processManager->getProcessInfo($pid);
+            $processName = $info['name'] ?? 'unknown';
+            Log::warning("Process {$pid} on port {$this->config->localPort} is not SSH (it's {$processName})");
+            return null;
+        }
+
+        Log::info("Found existing SSH tunnel by port", [
+            'pid' => $pid,
+            'port' => $this->config->localPort,
+        ]);
+
+        return $pid;
+    }
+
+    /**
+     * Smart tunnel reuse or creation
+     *
+     * Strategy:
+     * 1. Check if tunnel already active in this instance
+     * 2. Try to find existing tunnel by PID file
+     * 3. Try to find existing tunnel by port (lsof)
+     * 4. Create new tunnel if not found
+     *
+     * @return TunnelConnection
+     * @throws TunnelConnectionException
+     */
+    public function reuseOrCreate(): TunnelConnection
+    {
+        // Step 1: If we already have active connection - reuse it
+        if ($this->connection && $this->connection->isRunning()) {
+            Log::debug('SSH tunnel already active in current instance, reusing');
+            return $this->connection;
+        }
+
+        // Step 2: Try to find by PID file
+        $existingPid = $this->findExistingTunnelProcess();
+
+        // Step 3: If PID file not found, try to find by port
+        if (!$existingPid) {
+            $existingPid = $this->findExistingByPort();
+
+            // If found by port - save PID to file for future use
+            if ($existingPid) {
+                $this->savePidFile($existingPid);
+            }
+        }
+
+        // If found existing tunnel - reuse it
+        if ($existingPid) {
+            Log::info("Reusing existing SSH tunnel (PID: {$existingPid})");
+
+            $this->connection = new TunnelConnection($this->config);
+            $this->connection->setExistingPid($existingPid);
+
+            // Register database connection if specified
+            if ($this->connectionName && $this->databaseConfig) {
+                $this->registerDatabaseConnection();
+            }
+
+            return $this->connection;
+        }
+
+        // Step 4: No existing tunnel found - create new one
+        Log::info("No existing tunnel found, creating new one");
+        return $this->start();
+    }
+
+    /**
+     * Ensure tunnel is active, reconnect if needed
+     *
+     * @param int $maxAttempts Maximum number of reconnection attempts
      * @return bool
      */
     public function ensureConnected(int $maxAttempts = 3): bool
