@@ -576,6 +576,248 @@ This issue commonly occurs when:
 
 **Solution:** Always use `127.0.0.1` for both `remote_host` in tunnel config and database connection host when working with MySQL/MariaDB over SSH tunnels.
 
+## Advanced Features
+
+### Tunnel Reuse
+
+The package can automatically detect and reuse existing SSH tunnels instead of creating new ones. This is useful for:
+- Avoiding "port already in use" errors
+- Sharing tunnels between multiple processes
+- Faster command execution (no tunnel startup time)
+
+#### Smart Tunnel Discovery
+
+The package uses two methods to find existing tunnels:
+1. **PID file** - Fastest method, stores tunnel PID in temp directory
+2. **Port scan** - Uses `lsof`/`netstat` to find processes by port
+
+```php
+use ArtemYurov\Autossh\Tunnel;
+
+// Automatically reuse existing tunnel or create new one
+$tunnel = Tunnel::connection('remote_db')->reuseOrCreate();
+
+// Or explicitly find existing tunnel by port
+$pid = $tunnel->findExistingByPort();
+if ($pid) {
+    echo "Found existing tunnel with PID: $pid";
+}
+```
+
+#### Reuse Command
+
+Find and reuse existing tunnel from command line:
+
+```bash
+# Find and reuse existing tunnel
+php artisan tunnel:reuse remote_db
+
+# Reuse tunnel and register database connection
+php artisan tunnel:reuse remote_db \
+    --db-connection=pgsql_remote \
+    --db-database=mydb \
+    --db-username=user \
+    --db-password=pass
+```
+
+### Retry Logic
+
+Execute database operations with automatic retry on connection errors:
+
+```php
+use ArtemYurov\Autossh\Tunnel;
+
+$tunnel = Tunnel::connection('remote_db')
+    ->withDatabaseConnection('pgsql_remote', [...])
+    ->start();
+
+// Execute with automatic retry on connection loss
+$result = $tunnel->executeWithRetry(function() {
+    return DB::connection('pgsql_remote')->table('users')->count();
+}, $maxAttempts = 3);
+```
+
+If the operation fails due to connection error, the tunnel will automatically reconnect and retry the operation.
+
+#### Configuration
+
+Configure retry behavior in `config/tunnel.php`:
+
+```php
+'retry' => [
+    'max_attempts' => 3,           // Maximum retry attempts
+    'delay' => 2,                  // Delay between retries (seconds)
+    'exponential' => false,        // Use exponential backoff (2s, 4s, 8s...)
+],
+```
+
+Or use environment variables:
+
+```env
+TUNNEL_RETRY_MAX_ATTEMPTS=3
+TUNNEL_RETRY_DELAY=2
+TUNNEL_RETRY_EXPONENTIAL=false
+```
+
+### Database Validation
+
+Verify that database is actually accessible through tunnel (not just port checking):
+
+```php
+use ArtemYurov\Autossh\Tunnel;
+
+$connection = Tunnel::connection('remote_db')
+    ->withDatabaseConnection('pgsql_remote', [...])
+    ->start();
+
+// Simple validation (SELECT 1 query)
+if ($connection->validateDatabase('pgsql_remote')) {
+    echo "Database is accessible";
+}
+
+// Wait for database with retries
+if ($connection->waitForDatabase('pgsql_remote', $maxAttempts = 5, $delaySeconds = 2)) {
+    echo "Database became available";
+}
+
+// Full tunnel validation (process + port + database)
+$result = $connection->validate('pgsql_remote');
+if ($result['valid']) {
+    echo "Tunnel is fully operational";
+} else {
+    foreach ($result['errors'] as $error) {
+        echo "Error: $error\n";
+    }
+}
+```
+
+### Signal Handling
+
+Tunnels can automatically handle system signals for graceful shutdown:
+
+```php
+use ArtemYurov\Autossh\Tunnel;
+
+$connection = Tunnel::connection('remote_db')
+    ->start()
+    ->setupSignalHandlers();  // Handle SIGINT, SIGTERM
+
+// Tunnel will be properly closed when receiving Ctrl+C or kill signal
+```
+
+Requires `pcntl` extension. Configure in `config/tunnel.php`:
+
+```php
+'signals' => [
+    'enabled' => true,
+    'handlers' => ['SIGINT', 'SIGTERM'],
+],
+```
+
+### Keep-Alive Tunnels
+
+Create tunnels that persist after script ends:
+
+```php
+use ArtemYurov\Autossh\Tunnel;
+
+$connection = Tunnel::connection('remote_db')
+    ->start()
+    ->withKeepAlive(true);
+
+// Tunnel will stay alive even after script finishes
+echo "Tunnel PID: " . $connection->getPid();
+```
+
+To stop keep-alive tunnel, use the stop command:
+
+```bash
+php artisan tunnel:stop remote_db
+```
+
+### Diagnostic Tools
+
+#### Diagnose Command
+
+Comprehensive tunnel health check:
+
+```bash
+# Basic diagnostics
+php artisan tunnel:diagnose remote_db
+
+# Include database check
+php artisan tunnel:diagnose remote_db --db-connection=pgsql_remote
+
+# Verbose output
+php artisan tunnel:diagnose remote_db --verbose
+```
+
+The diagnostic tool checks:
+- ✓ Configuration existence
+- ✓ Process running (PID file + port scan)
+- ✓ Process is SSH
+- ✓ Port accessibility
+- ✓ Database accessibility (optional)
+
+### ManagesTunnel Trait for Commands
+
+Convenient trait for managing tunnels in Laravel commands:
+
+```php
+namespace App\Console\Commands;
+
+use Illuminate\Console\Command;
+use ArtemYurov\Autossh\Console\Traits\ManagesTunnel;
+use Illuminate\Support\Facades\DB;
+
+class SyncRemoteData extends Command
+{
+    use ManagesTunnel;
+
+    protected $signature = 'data:sync';
+
+    public function handle(): int
+    {
+        // Setup tunnel with automatic reconnection and validation
+        $this->setupTunnel('remote_db', [
+            'connection_name' => 'pgsql_remote',
+            'driver' => 'pgsql',
+            'database' => env('REMOTE_DB_DATABASE'),
+            'username' => env('REMOTE_DB_USERNAME'),
+            'password' => env('REMOTE_DB_PASSWORD'),
+        ], $keepAlive = false, $validateDb = true);
+
+        try {
+            // Execute with automatic retry on connection errors
+            $this->withTunnelRetry(function() {
+                $data = DB::connection('pgsql_remote')
+                    ->table('users')
+                    ->get();
+
+                $this->info("Synced " . count($data) . " records");
+            });
+
+            return Command::SUCCESS;
+
+        } finally {
+            // Graceful tunnel closure
+            $this->closeTunnel();
+        }
+    }
+}
+```
+
+#### ManagesTunnel Methods
+
+- `setupTunnel($connection, $dbConfig, $keepAlive, $validateDb)` - Initialize tunnel
+- `ensureTunnelConnected($maxAttempts)` - Check and reconnect if needed
+- `withTunnelRetry($operation, $maxAttempts)` - Execute with retry
+- `validateTunnelDatabase($connection, $timeout, $wait)` - Validate database
+- `validateTunnel($connection)` - Full validation
+- `closeTunnel()` - Graceful shutdown
+- `isTunnelRunning()` - Check status
+- `getTunnel()` / `getTunnelConnection()` - Get instances
+
 ## API Reference
 
 ### Artisan Commands
@@ -583,6 +825,8 @@ This issue commonly occurs when:
 - `tunnel:start {connection?} {--detach}` - Start tunnel with live monitoring (or in background with --detach)
 - `tunnel:stop {connection?} {--all}` - Stop tunnel (or all tunnels with --all)
 - `tunnel:status {connection?} {--all}` - Show tunnel status (or all tunnels with --all)
+- `tunnel:reuse {connection?} {--db-connection=} {--db-driver=} {--db-database=} {--db-username=} {--db-password=}` - Find and reuse existing tunnel
+- `tunnel:diagnose {connection?} {--db-connection=} {--verbose}` - Diagnose tunnel health
 
 ### Tunnel
 
@@ -595,6 +839,9 @@ This issue commonly occurs when:
 
 - `withDatabaseConnection(string $name, array $config): self` - Register Laravel DB connection
 - `start(): TunnelConnection` - Start tunnel
+- `reuseOrCreate(): TunnelConnection` - Smart tunnel reuse or creation
+- `findExistingByPort(): ?int` - Find existing tunnel by port using lsof
+- `ensureConnected(int $maxAttempts = 3): bool` - Ensure tunnel is active, reconnect if needed
 - `execute(callable $callback): mixed` - Execute callback with automatic tunnel management
 - `getConfig(): TunnelConfig` - Get configuration
 - `getConnection(): ?TunnelConnection` - Get active connection
@@ -605,6 +852,13 @@ This issue commonly occurs when:
 - `getPid(): ?int` - Get process PID
 - `stop(): void` - Stop tunnel
 - `verifyConnection(): bool` - Verify tunnel availability
+- `ensureConnected(int $maxAttempts = 3): bool` - Reconnect if tunnel is down
+- `withKeepAlive(bool $keepAlive = true): self` - Set keep-alive flag
+- `setupSignalHandlers(): self` - Setup SIGINT/SIGTERM handlers
+- `validateDatabase(string $connectionName, int $timeout = 5): bool` - Validate database accessibility
+- `waitForDatabase(string $connectionName, int $maxAttempts = 5, int $delaySeconds = 2): bool` - Wait for database with retries
+- `executeWithRetry(callable $operation, ?int $maxAttempts = null): mixed` - Execute with automatic retry
+- `validate(?string $connectionName = null): array` - Full validation (process + port + database)
 
 ### TunnelManager
 

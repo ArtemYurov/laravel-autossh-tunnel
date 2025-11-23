@@ -14,6 +14,75 @@ return [
     ],
 
     /*
+     * Retry Configuration
+     *
+     * Configure retry behavior when tunnel operations fail due to connection issues.
+     * These settings apply to database operations executed through executeWithRetry().
+     */
+    'retry' => [
+        // Maximum number of retry attempts
+        'max_attempts' => env('TUNNEL_RETRY_MAX_ATTEMPTS', 3),
+
+        // Delay between retry attempts in seconds
+        'delay' => env('TUNNEL_RETRY_DELAY', 2),
+
+        // Use exponential backoff for retry delays (2s, 4s, 8s, 16s...)
+        'exponential' => env('TUNNEL_RETRY_EXPONENTIAL', false),
+    ],
+
+    /*
+     * Connection Validation
+     *
+     * Configure how tunnel connections are validated for health and accessibility.
+     */
+    'validation' => [
+        // Timeout for port accessibility checks in seconds
+        'port_timeout' => env('TUNNEL_VALIDATION_PORT_TIMEOUT', 1),
+
+        // Timeout for database connection checks in seconds
+        'database_timeout' => env('TUNNEL_VALIDATION_DATABASE_TIMEOUT', 5),
+
+        // Maximum attempts when waiting for database to become available
+        'database_max_attempts' => env('TUNNEL_VALIDATION_DATABASE_MAX_ATTEMPTS', 5),
+
+        // Delay between database availability check attempts in seconds
+        'database_retry_delay' => env('TUNNEL_VALIDATION_DATABASE_RETRY_DELAY', 2),
+    ],
+
+    /*
+     * Signal Handling
+     *
+     * Configure how tunnels respond to system signals (SIGINT, SIGTERM).
+     * Requires pcntl extension to be enabled.
+     */
+    'signals' => [
+        // Enable automatic signal handlers for graceful shutdown
+        'enabled' => env('TUNNEL_SIGNALS_ENABLED', true),
+
+        // Signals to handle (SIGINT = Ctrl+C, SIGTERM = termination)
+        'handlers' => [
+            'SIGINT',   // Interrupt (Ctrl+C)
+            'SIGTERM',  // Terminate
+        ],
+    ],
+
+    /*
+     * Tunnel Reuse
+     *
+     * Configure how existing tunnels are discovered and reused.
+     */
+    'reuse' => [
+        // Enable tunnel reuse by PID file
+        'use_pid_file' => env('TUNNEL_REUSE_PID_FILE', true),
+
+        // Enable tunnel discovery by port scan (using lsof/netstat)
+        'use_port_scan' => env('TUNNEL_REUSE_PORT_SCAN', true),
+
+        // PID file storage directory (default: system temp directory)
+        'pid_directory' => env('TUNNEL_PID_DIRECTORY', sys_get_temp_dir() . '/laravel-autossh-tunnel'),
+    ],
+
+    /*
      * Tunnel Connections
      *
      * All SSH tunnels available in the application are defined here.
