@@ -5,6 +5,7 @@ namespace ArtemYurov\Autossh\Console;
 use ArtemYurov\Autossh\Tunnel;
 use ArtemYurov\Autossh\TunnelManager;
 use ArtemYurov\Autossh\Exceptions\TunnelConnectionException;
+use ArtemYurov\Autossh\Exceptions\TunnelConfigException;
 use Illuminate\Console\Command;
 use Symfony\Component\Console\Terminal;
 
@@ -80,6 +81,12 @@ class TunnelStartCommand extends Command
 
             return self::SUCCESS;
 
+        } catch (TunnelConfigException $e) {
+            $this->newLine();
+            $this->error($e->getMessage());
+            $this->newLine();
+            $this->info("Check your configuration in: config/tunnel.php");
+            return self::FAILURE;
         } catch (TunnelConnectionException $e) {
             $this->error("Failed to start tunnel: {$e->getMessage()}");
             $manager->removeTunnel($connectionName);

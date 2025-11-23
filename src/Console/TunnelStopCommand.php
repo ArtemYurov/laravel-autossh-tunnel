@@ -32,6 +32,17 @@ class TunnelStopCommand extends Command
 
         if (!$info) {
             $this->error("Tunnel '{$connectionName}' is not running.");
+
+            // Show available configured tunnels
+            $availableConnections = array_keys(config('tunnel.connections', []));
+            if (!empty($availableConnections)) {
+                $this->newLine();
+                $this->info("Available tunnel connections in config/tunnel.php:");
+                foreach ($availableConnections as $connection) {
+                    $this->line("  - {$connection}");
+                }
+            }
+
             return self::FAILURE;
         }
 
