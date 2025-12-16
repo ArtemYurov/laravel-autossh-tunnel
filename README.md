@@ -64,6 +64,7 @@ TUNNEL_REMOTE_HOST=localhost
 TUNNEL_REMOTE_PORT=5432
 
 # Local Bind (where to bind locally)
+TUNNEL_LOCAL_HOST=127.0.0.1
 TUNNEL_LOCAL_PORT=15432
 
 # SSH Options
@@ -75,7 +76,8 @@ TUNNEL_SSH_TCP_KEEP_ALIVE=true
 TUNNEL_SSH_CONNECT_TIMEOUT=10
 
 # Database connection using tunnel
-TUNNEL_DB_HOST=localhost
+TUNNEL_DB_CONNECTION=pgsql
+TUNNEL_DB_HOST="${TUNNEL_LOCAL_HOST}"
 TUNNEL_DB_PORT="${TUNNEL_LOCAL_PORT}"
 TUNNEL_DB_DATABASE=database_name
 TUNNEL_DB_USERNAME=db_user
@@ -88,51 +90,153 @@ After publishing the config, edit `config/tunnel.php`:
 
 ```php
 return [
-    'default' => 'remote_db',
+    // Default tunnel name
+    'default' => env('TUNNEL_CONNECTION', 'remote_db'),
+
+    // Enable detailed logging
+    'debug' => env('TUNNEL_DEBUG', env('APP_DEBUG', false)),
+
+    // AutoSSH configuration
+    'autossh' => [
+        'enabled' => env('TUNNEL_AUTOSSH_ENABLED', true),
+    ],
+
+    // Retry configuration for database operations
+    'retry' => [
+        'max_attempts' => env('TUNNEL_RETRY_MAX_ATTEMPTS', 3),
+        'delay' => env('TUNNEL_RETRY_DELAY', 2),
+        'exponential' => env('TUNNEL_RETRY_EXPONENTIAL', false),
+    ],
+
+    // Connection validation settings
+    'validation' => [
+        'port_timeout' => env('TUNNEL_VALIDATION_PORT_TIMEOUT', 1),
+        'database_timeout' => env('TUNNEL_VALIDATION_DATABASE_TIMEOUT', 5),
+        'database_max_attempts' => env('TUNNEL_VALIDATION_DATABASE_MAX_ATTEMPTS', 5),
+        'database_retry_delay' => env('TUNNEL_VALIDATION_DATABASE_RETRY_DELAY', 2),
+    ],
+
+    // Signal handling (SIGINT, SIGTERM)
+    'signals' => [
+        'enabled' => env('TUNNEL_SIGNALS_ENABLED', true),
+        'handlers' => ['SIGINT', 'SIGTERM'],
+    ],
+
+    // Tunnel reuse settings
+    'reuse' => [
+        'use_pid_file' => env('TUNNEL_REUSE_PID_FILE', true),
+        'use_port_scan' => env('TUNNEL_REUSE_PORT_SCAN', true),
+        'pid_directory' => env('TUNNEL_PID_DIRECTORY', sys_get_temp_dir() . '/laravel-autossh-tunnel'),
+    ],
 
     'connections' => [
         'remote_db' => [
             'type' => 'forward',
             // SSH Connection
-            'user' => 'your_user',
-            'host' => 'production.example.com',
-            'port' => 22,
-            'identity_file' => '/path/to/ssh/key',
+            'user' => env('TUNNEL_SSH_USER'),
+            'host' => env('TUNNEL_SSH_HOST'),
+            'port' => env('TUNNEL_SSH_PORT', 22),
+            'identity_file' => env('TUNNEL_SSH_KEY'),
             // Remote Target
-            'remote_host' => 'localhost',
-            'remote_port' => 5432,
+            'remote_host' => env('TUNNEL_REMOTE_HOST', 'localhost'),
+            'remote_port' => env('TUNNEL_REMOTE_PORT', 5432),
             // Local Bind
-            'local_port' => 15432,
+            'local_host' => env('TUNNEL_LOCAL_HOST', '127.0.0.1'),
+            'local_port' => env('TUNNEL_LOCAL_PORT', 15432),
             // SSH Options (all optional, defaults shown)
             'ssh_options' => [
-                'StrictHostKeyChecking' => false,
-                'ServerAliveInterval' => 60,
-                'ServerAliveCountMax' => 3,
-                'ExitOnForwardFailure' => true,
-                'TCPKeepAlive' => true,
-                'ConnectTimeout' => 10,
+                'StrictHostKeyChecking' => env('TUNNEL_SSH_STRICT_HOST_KEY_CHECKING', false),
+                'ServerAliveInterval' => env('TUNNEL_SSH_SERVER_ALIVE_INTERVAL', 60),
+                'ServerAliveCountMax' => env('TUNNEL_SSH_SERVER_ALIVE_COUNT_MAX', 3),
+                'ExitOnForwardFailure' => env('TUNNEL_SSH_EXIT_ON_FORWARD_FAILURE', true),
+                'TCPKeepAlive' => env('TUNNEL_SSH_TCP_KEEP_ALIVE', true),
+                'ConnectTimeout' => env('TUNNEL_SSH_CONNECT_TIMEOUT', 10),
             ],
         ],
 
         'local_webhooks' => [
             'type' => 'reverse',
-            'user' => 'your_user',
-            'host' => 'public-server.com',
-            'port' => 22,
-            'remote_host' => 'localhost',  // Or 0.0.0.0 for public access
-            'remote_port' => 8080,
-            'local_port' => 8000,
+            'user' => env('WEBHOOK_SSH_USER'),
+            'host' => env('WEBHOOK_SSH_HOST'),
+            'port' => env('WEBHOOK_SSH_PORT', 22),
+            'identity_file' => env('WEBHOOK_SSH_KEY'),
+            'remote_host' => env('WEBHOOK_REMOTE_HOST', 'localhost'),  // Or 0.0.0.0 for public access
+            'remote_port' => env('WEBHOOK_REMOTE_PORT', 8080),
+            'local_host' => env('WEBHOOK_LOCAL_HOST', '127.0.0.1'),
+            'local_port' => env('WEBHOOK_LOCAL_PORT', 8000),
             'ssh_options' => [
-                'StrictHostKeyChecking' => false,
-                'ServerAliveInterval' => 60,
-                'ServerAliveCountMax' => 3,
-                'ExitOnForwardFailure' => true,
-                'TCPKeepAlive' => true,
-                'ConnectTimeout' => 10,
+                'StrictHostKeyChecking' => env('WEBHOOK_SSH_STRICT_HOST_KEY_CHECKING', false),
+                'ServerAliveInterval' => env('WEBHOOK_SSH_SERVER_ALIVE_INTERVAL', 60),
+                'ServerAliveCountMax' => env('WEBHOOK_SSH_SERVER_ALIVE_COUNT_MAX', 3),
+                'ExitOnForwardFailure' => env('WEBHOOK_SSH_EXIT_ON_FORWARD_FAILURE', true),
+                'TCPKeepAlive' => env('WEBHOOK_SSH_TCP_KEEP_ALIVE', true),
+                'ConnectTimeout' => env('WEBHOOK_SSH_CONNECT_TIMEOUT', 10),
             ],
         ],
     ],
 ];
+```
+
+### Multiple Connections Example
+
+For multiple tunnel connections, use unique prefixes for each connection:
+
+```env
+# PostgreSQL Development Server
+REMOTE_DEV_SSH_USER=www-backend
+REMOTE_DEV_SSH_HOST=dev.example.com
+REMOTE_DEV_SSH_PORT=22
+REMOTE_DEV_SSH_KEY=
+REMOTE_DEV_REMOTE_HOST=localhost
+REMOTE_DEV_REMOTE_PORT=5432
+REMOTE_DEV_LOCAL_HOST=127.0.0.1
+REMOTE_DEV_LOCAL_PORT=16432
+
+REMOTE_DEV_DB_DATABASE=project_db
+REMOTE_DEV_DB_USERNAME=db_user
+REMOTE_DEV_DB_PASSWORD=secret
+
+# MySQL Legacy Database
+LEGACY_SSH_USER=root
+LEGACY_SSH_HOST=legacy.example.com
+LEGACY_SSH_PORT=22
+LEGACY_REMOTE_HOST=127.0.0.1
+LEGACY_REMOTE_PORT=3306
+LEGACY_LOCAL_HOST=127.0.0.1
+LEGACY_LOCAL_PORT=13306
+
+LEGACY_DB_DATABASE=legacy_db
+LEGACY_DB_USERNAME=legacy_user
+LEGACY_DB_PASSWORD=secret
+```
+
+```php
+// config/tunnel.php
+'connections' => [
+    'remote_dev_db' => [
+        'type' => 'forward',
+        'user' => env('REMOTE_DEV_SSH_USER'),
+        'host' => env('REMOTE_DEV_SSH_HOST'),
+        'port' => env('REMOTE_DEV_SSH_PORT', 22),
+        'identity_file' => env('REMOTE_DEV_SSH_KEY'),
+        'remote_host' => env('REMOTE_DEV_REMOTE_HOST', 'localhost'),
+        'remote_port' => env('REMOTE_DEV_REMOTE_PORT', 5432),
+        'local_host' => env('REMOTE_DEV_LOCAL_HOST', '127.0.0.1'),
+        'local_port' => env('REMOTE_DEV_LOCAL_PORT', 16432),
+    ],
+
+    'legacy_db' => [
+        'type' => 'forward',
+        'user' => env('LEGACY_SSH_USER'),
+        'host' => env('LEGACY_SSH_HOST'),
+        'port' => env('LEGACY_SSH_PORT', 22),
+        'identity_file' => env('LEGACY_SSH_KEY'),
+        'remote_host' => env('LEGACY_REMOTE_HOST', '127.0.0.1'),
+        'remote_port' => env('LEGACY_REMOTE_PORT', 3306),
+        'local_host' => env('LEGACY_LOCAL_HOST', '127.0.0.1'),
+        'local_port' => env('LEGACY_LOCAL_PORT', 13306),
+    ],
+],
 ```
 
 ## Tunnel Types
