@@ -26,8 +26,7 @@ class TunnelDiagnoseCommand extends BaseTunnelCommand
      */
     protected $signature = 'tunnel:diagnose
                             {connection? : Tunnel connection name from config/tunnel.php}
-                            {--db-connection= : Database connection name to check}
-                            {--verbose : Show detailed diagnostic information}';
+                            {--db-connection= : Database connection name to check}';
 
     /**
      * The console command description.
@@ -85,7 +84,7 @@ class TunnelDiagnoseCommand extends BaseTunnelCommand
             $config = $tunnel->getConfig();
 
             $this->line('✓ Configuration found');
-            if ($this->option('verbose')) {
+            if ($this->output->isVerbose()) {
                 $this->line("  Local: {$config->localHost}:{$config->localPort}");
                 $this->line("  Remote: {$config->user}@{$config->host}:{$config->port}");
                 $this->line("  Target: {$config->remoteHost}:{$config->remotePort}");
@@ -119,7 +118,7 @@ class TunnelDiagnoseCommand extends BaseTunnelCommand
             $processInfo = $this->processManager->getProcessInfo($pid);
             if (!empty($processInfo)) {
                 $this->line("  Process: {$processInfo['name']}");
-                if ($this->option('verbose') && !empty($processInfo['command'])) {
+                if ($this->output->isVerbose() && !empty($processInfo['command'])) {
                     $this->line("  Command: {$processInfo['command']}");
                 }
             }
@@ -152,7 +151,7 @@ class TunnelDiagnoseCommand extends BaseTunnelCommand
                 } else {
                     $this->error("✗ Database '{$this->option('db-connection')}' is not accessible");
 
-                    if ($this->option('verbose')) {
+                    if ($this->output->isVerbose()) {
                         $error = $this->validator->getDatabaseConnectionError($this->option('db-connection'));
                         $this->line("  Error: {$error}");
                     }
