@@ -106,8 +106,21 @@ class TunnelConnection
             );
         }
 
-        // Verify port is accessible
-        if (!$this->verifyConnection()) {
+        // Verify port is accessible (retry several times, SSH handshake may take longer in Docker)
+        $portReady = false;
+        $maxPortChecks = (int) config('tunnel.validation.port_max_attempts', 5);
+        for ($i = 0; $i < $maxPortChecks; $i++) {
+            if ($this->verifyConnection()) {
+                $portReady = true;
+                break;
+            }
+            if (!$this->process->isRunning()) {
+                break;
+            }
+            sleep(1);
+        }
+
+        if (!$portReady) {
             $this->stop();
             throw new TunnelConnectionException(
                 "SSH tunnel started but port {$this->config->localPort} is not accessible"
