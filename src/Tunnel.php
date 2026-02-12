@@ -153,17 +153,17 @@ class Tunnel
             return $this->connection;
         }
 
-        // Проверяем наличие существующего туннеля через PID файл
+        // Check for existing tunnel via PID file
         $existingPid = $this->findExistingTunnelProcess();
 
         if ($existingPid) {
             Log::info("Found existing SSH tunnel (PID: {$existingPid}), reusing it");
 
-            // Создаём фиктивное подключение для существующего туннеля
+            // Create a proxy connection for the existing tunnel
             $this->connection = new TunnelConnection($this->config);
             $this->connection->setExistingPid($existingPid);
 
-            // Регистрируем DB connection для существующего туннеля
+            // Register DB connection for the existing tunnel
             if ($this->connectionName && $this->databaseConfig) {
                 $this->registerDatabaseConnection();
             }
@@ -171,17 +171,17 @@ class Tunnel
             return $this->connection;
         }
 
-        // Создаём новый туннель
+        // Create new tunnel
         $this->connection = new TunnelConnection($this->config);
 
-        // Устанавливаем callback для удаления PID файла при остановке
+        // Set callback to remove PID file on stop
         $this->connection->setOnStopCallback(function() {
             $this->removePidFile();
         });
 
         $this->connection->start();
 
-        // Сохраняем PID в файл
+        // Save PID to file
         $pid = $this->connection->getPid();
         if ($pid) {
             $this->savePidFile($pid);
@@ -196,7 +196,7 @@ class Tunnel
     }
 
     /**
-     * Получить путь к директории для хранения PID файлов
+     * Get path to directory for storing PID files
      *
      * @return string
      */
@@ -212,7 +212,7 @@ class Tunnel
     }
 
     /**
-     * Получить путь к PID файлу для данного туннеля
+     * Get PID file path for this tunnel
      *
      * @return string
      */
@@ -222,7 +222,7 @@ class Tunnel
     }
 
     /**
-     * Сохранить PID в файл
+     * Save PID to file
      *
      * @param int $pid
      * @return void
@@ -239,7 +239,7 @@ class Tunnel
     }
 
     /**
-     * Удалить PID файл
+     * Remove PID file
      *
      * @return void
      */
@@ -254,7 +254,7 @@ class Tunnel
     }
 
     /**
-     * Прочитать PID из файла
+     * Read PID from file
      *
      * @return int|null
      */
@@ -291,14 +291,14 @@ class Tunnel
     }
 
     /**
-     * Найти существующий SSH туннель
-     * Проверяет: 1) наличие PID файла, 2) существование процесса, 3) доступность порта
+     * Find existing SSH tunnel
+     * Checks: 1) PID file existence, 2) process existence, 3) port availability
      *
-     * @return int|null PID процесса или null если не найден
+     * @return int|null Process PID or null if not found
      */
     protected function findExistingTunnelProcess(): ?int
     {
-        // Шаг 1: Читаем PID из файла
+        // Step 1: Read PID from file
         $pid = $this->readPidFile();
 
         if (!$pid) {
@@ -308,14 +308,14 @@ class Tunnel
 
         Log::debug("Found PID file with PID: {$pid}");
 
-        // Шаг 2: Проверяем что процесс запущен
+        // Step 2: Verify process is running
         if (!$this->isProcessRunning($pid)) {
             Log::warning("Process {$pid} from PID file is not running, cleaning up");
             $this->removePidFile();
             return null;
         }
 
-        // Шаг 3: Проверяем что это SSH процесс
+        // Step 3: Verify it's an SSH process
         $processName = trim(shell_exec("ps -p {$pid} -o comm= 2>/dev/null"));
 
         if (strpos($processName, 'ssh') === false) {
@@ -324,7 +324,7 @@ class Tunnel
             return null;
         }
 
-        // Шаг 4: Проверяем что порт доступен
+        // Step 4: Verify port is accessible
         if (!$this->isPortInUse($this->config->localHost, $this->config->localPort)) {
             Log::warning("SSH process {$pid} exists but port {$this->config->localPort} is not accessible, cleaning up");
             $this->removePidFile();
@@ -341,7 +341,7 @@ class Tunnel
     }
 
     /**
-     * Проверка запущен ли процесс
+     * Check if process is running
      *
      * @param int $pid
      * @return bool
@@ -352,7 +352,7 @@ class Tunnel
             return posix_getpgid($pid) !== false;
         }
 
-        // Fallback для систем без posix
+        // Fallback for systems without posix
         return file_exists("/proc/{$pid}");
     }
 

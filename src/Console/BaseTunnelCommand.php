@@ -5,14 +5,14 @@ namespace ArtemYurov\Autossh\Console;
 use Illuminate\Console\Command;
 
 /**
- * Базовый класс для команд управления туннелями
+ * Base class for tunnel management commands
  *
- * Абстрактный класс не регистрируется Laravel как команда
+ * Abstract class is not registered by Laravel as a command
  */
 abstract class BaseTunnelCommand extends Command
 {
     /**
-     * Показать список доступных туннелей из конфигурации
+     * Show available tunnels from configuration
      */
     protected function showAvailableConnections(): void
     {

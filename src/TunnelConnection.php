@@ -17,6 +17,7 @@ class TunnelConnection
     protected ?Process $process = null;
     protected bool $isRunning = false;
     protected ?int $existingPid = null; // PID of existing tunnel (not created by us)
+    protected bool $isExternalTunnel = false; // Tunnel was not created by us
     protected $onStopCallback = null; // Callback called when tunnel stops
     protected bool $keepAlive = false; // Keep tunnel running after script ends
     protected bool $signalHandlersSetup = false; // Flag indicating signal handlers are set up
@@ -29,7 +30,7 @@ class TunnelConnection
     }
 
     /**
-     * Установить callback для вызова при остановке туннеля
+     * Set callback to be called when tunnel stops
      *
      * @param callable $callback
      * @return self
@@ -53,12 +54,15 @@ class TunnelConnection
             return $this;
         }
 
-        // Check local port availability
+        // Check local port availability — reuse existing tunnel if port is already in use
         if ($this->isPortInUse($this->config->localPort)) {
-            throw new TunnelConnectionException(
-                "Local port {$this->config->localPort} is already in use. " .
-                "Tunnel may already be active or port is used by another process."
-            );
+            Log::info('Port already in use, reusing existing tunnel', [
+                'port' => $this->config->localPort,
+            ]);
+            $this->isRunning = true;
+            $this->isExternalTunnel = true;
+            $this->existingPid = $this->findPidByPort($this->config->localPort);
+            return $this;
         }
 
         $sshCommand = $this->config->getSshCommand($this->isAutosshAvailable());
@@ -121,9 +125,14 @@ class TunnelConnection
         }
 
         if (!$portReady) {
+            $processRunning = $this->process->isRunning();
+            $stderr = $this->process->getErrorOutput();
             $this->stop();
             throw new TunnelConnectionException(
-                "SSH tunnel started but port {$this->config->localPort} is not accessible"
+                "SSH tunnel started but port {$this->config->localPort} is not accessible" .
+                " (process running: " . ($processRunning ? 'yes' : 'no') .
+                ", attempts: {$maxPortChecks}" .
+                ($stderr ? ", stderr: {$stderr}" : '') . ")"
             );
         }
 
@@ -144,8 +153,8 @@ class TunnelConnection
      */
     public function stop(): void
     {
-        // Если это существующий туннель (не созданный нами) - не останавливаем его
-        if ($this->existingPid) {
+        // If this is an existing tunnel (not created by us) - don't stop it
+        if ($this->isExternalTunnel) {
             Log::debug("Not stopping existing SSH tunnel (PID: {$this->existingPid}), it was created by another process");
             return;
         }
@@ -169,7 +178,7 @@ class TunnelConnection
 
             $this->isRunning = false;
 
-            // Вызываем callback для очистки (например, удаления PID файла)
+            // Call cleanup callback (e.g., to remove PID file)
             if ($this->onStopCallback) {
                 call_user_func($this->onStopCallback);
             }
@@ -189,8 +198,8 @@ class TunnelConnection
      */
     public function verifyConnection(): bool
     {
-        // Если это существующий туннель - проверяем только порт
-        if ($this->existingPid) {
+        // If this is an existing tunnel - only check the port
+        if ($this->isExternalTunnel) {
             return $this->isPortInUse($this->config->localPort);
         }
 
@@ -202,10 +211,10 @@ class TunnelConnection
     }
 
     /**
-     * Восстановить туннель если он отвалился
+     * Reconnect tunnel if connection was lost
      *
-     * @param int $maxAttempts Максимальное количество попыток
-     * @return bool Успешно ли восстановлен
+     * @param int $maxAttempts Maximum number of attempts
+     * @return bool Whether reconnection was successful
      */
     public function ensureConnected(int $maxAttempts = 3): bool
     {
@@ -217,8 +226,8 @@ class TunnelConnection
             'config' => (string) $this->config,
         ]);
 
-        // Если это был существующий туннель - не пытаемся его восстановить
-        if ($this->existingPid) {
+        // If this was an existing tunnel - don't attempt to reconnect it
+        if ($this->isExternalTunnel) {
             Log::error('External SSH tunnel is down, cannot reconnect', [
                 'pid' => $this->existingPid,
             ]);
@@ -229,19 +238,19 @@ class TunnelConnection
             try {
                 Log::info("Reconnection attempt {$attempt}/{$maxAttempts}");
 
-                // Останавливаем старое соединение если оно есть
+                // Stop old connection if it exists
                 if ($this->process && $this->process->isRunning()) {
                     $this->process->stop();
                 }
 
-                // Ждём освобождения порта
+                // Wait for port to become available
                 $waitAttempts = 0;
                 while ($this->isPortInUse($this->config->localPort) && $waitAttempts < 10) {
                     sleep(1);
                     $waitAttempts++;
                 }
 
-                // Создаём новое соединение
+                // Create new connection
                 $sshCommand = $this->config->getSshCommand($this->isAutosshAvailable());
 
                 $this->process = Process::fromShellCommandline($sshCommand);
@@ -274,6 +283,25 @@ class TunnelConnection
     }
 
     /**
+     * Find PID of process listening on a given port
+     *
+     * @param int $port
+     * @return int|null
+     */
+    protected function findPidByPort(int $port): ?int
+    {
+        $process = Process::fromShellCommandline("lsof -ti tcp:{$port} -sTCP:LISTEN 2>/dev/null | head -1");
+        $process->run();
+
+        if ($process->isSuccessful()) {
+            $pid = trim($process->getOutput());
+            return $pid !== '' ? (int) $pid : null;
+        }
+
+        return null;
+    }
+
+    /**
      * Check if port is in use
      *
      * @param int $port
@@ -292,7 +320,7 @@ class TunnelConnection
     }
 
     /**
-     * Установить PID существующего туннеля
+     * Set PID of an existing tunnel
      *
      * @param int $pid
      * @return $this
@@ -300,6 +328,7 @@ class TunnelConnection
     public function setExistingPid(int $pid): self
     {
         $this->existingPid = $pid;
+        $this->isExternalTunnel = true;
         $this->isRunning = true;
 
         Log::info("Using existing SSH tunnel", [

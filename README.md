@@ -561,6 +561,81 @@ If you want to use regular SSH even when autossh is available:
 TUNNEL_AUTOSSH_ENABLED=false
 ```
 
+## Docker & DDEV
+
+SSH tunnels work inside containers — you need access to SSH keys and `autossh` installed.
+
+### DDEV (Docker Desktop)
+
+DDEV runs on Docker Desktop, which provides built-in
+[SSH agent forwarding](https://docs.docker.com/desktop/features/networking/networking-how-tos/#ssh-agent-forwarding)
+through the socket `/run/host-services/ssh-auth.sock`.
+
+1. Add `autossh` to `config.yaml`:
+
+```yaml
+webimage_extra_packages: [autossh]
+```
+
+2. Create `.ddev/docker-compose.ssh-auth-socket.yaml` for SSH agent forwarding:
+
+```yaml
+services:
+  web:
+    volumes:
+      - type: bind
+        source: /run/host-services/ssh-auth.sock
+        target: /run/host-services/ssh-auth.sock
+    environment:
+      SSH_AUTH_SOCK: /run/host-services/ssh-auth.sock
+```
+
+3. Restart and verify:
+
+```bash
+ddev restart
+ddev exec ssh-add -l          # should list your SSH keys
+ddev exec php artisan tunnel:start
+```
+
+### Docker Compose (Server / Docker Engine)
+
+On servers there is no Docker Desktop, so SSH agent forwarding via
+`/run/host-services/ssh-auth.sock` is not available. Instead, mount the host's
+`~/.ssh` directory directly into the container (read-only).
+
+1. Add `openssh-client autossh` to your Dockerfile:
+
+```dockerfile
+RUN apt-get update && apt-get install -y openssh-client autossh
+```
+
+2. Create `docker-compose.ssh-keys.yaml`:
+
+```yaml
+services:
+  app:
+    volumes:
+      - ~/.ssh:/root/.ssh:ro
+```
+
+> **Note:** Adjust the target path (`/root/.ssh`) to match the user running the
+> application inside the container (e.g. `/home/www-data/.ssh` or `/var/www/.ssh`).
+
+3. Include it via `COMPOSE_FILE` in `.env`:
+
+```bash
+COMPOSE_FILE=docker-compose.yaml:docker-compose.ssh-keys.yaml
+```
+
+4. Rebuild and verify:
+
+```bash
+docker compose up -d --build
+docker compose exec app ssh-add -l          # should list your SSH keys
+docker compose exec app php artisan tunnel:start
+```
+
 ## Error Handling
 
 ```php
