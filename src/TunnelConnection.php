@@ -83,56 +83,48 @@ class TunnelConnection
         $this->process->setTimeout(null); // Tunnel runs indefinitely
         $this->process->start();
 
-        // Give tunnel time to establish
-        sleep(2);
+        // Wait for tunnel to establish connection (polling with timeout).
+        // Long timeout needed for SSH agents with interactive confirmation (Secretive, Touch ID).
+        $maxWait = (int) config('tunnel.validation.port_max_attempts', 10);
+        $connected = false;
 
-        // Verify tunnel started
-        if (!$this->process->isRunning()) {
-            $error = $this->process->getErrorOutput();
+        for ($i = 0; $i < $maxWait; $i++) {
+            sleep(1);
 
-            // Special handling for "Too many authentication failures"
-            if (str_contains($error, 'Too many authentication failures')) {
+            // Check that process is still alive
+            if (!$this->process->isRunning()) {
+                $error = $this->process->getErrorOutput();
+
+                if (str_contains($error, 'Too many authentication failures')) {
+                    throw new TunnelConnectionException(
+                        "SSH tunnel: Too many authentication failures.\n" .
+                        "You have many keys in SSH agent and server is rejecting connection.\n\n" .
+                        "Solutions:\n" .
+                        "1. Add to ~/.ssh/config:\n" .
+                        "   Host {$this->config->host}\n" .
+                        "     IdentityFile ~/.ssh/your_key\n" .
+                        "     IdentitiesOnly yes\n\n" .
+                        "2. Or specify PGSQL_TUNNEL_KEY=/path/to/key in .env\n\n" .
+                        "Original error:\n{$error}"
+                    );
+                }
+
                 throw new TunnelConnectionException(
-                    "SSH tunnel: Too many authentication failures.\n" .
-                    "You have many keys in SSH agent and server is rejecting connection.\n\n" .
-                    "Solutions:\n" .
-                    "1. Add to ~/.ssh/config:\n" .
-                    "   Host {$this->config->host}\n" .
-                    "     IdentityFile ~/.ssh/your_key\n" .
-                    "     IdentitiesOnly yes\n\n" .
-                    "2. Or specify PGSQL_TUNNEL_KEY=/path/to/key in .env\n\n" .
-                    "Original error:\n{$error}"
+                    "Failed to start SSH tunnel: " . ($error ?: 'Process terminated')
                 );
             }
 
-            throw new TunnelConnectionException(
-                "Failed to start SSH tunnel: " . ($error ?: 'Process terminated')
-            );
-        }
-
-        // Verify port is accessible (retry several times, SSH handshake may take longer in Docker)
-        $portReady = false;
-        $maxPortChecks = (int) config('tunnel.validation.port_max_attempts', 5);
-        for ($i = 0; $i < $maxPortChecks; $i++) {
-            if ($this->verifyConnection()) {
-                $portReady = true;
+            // Check that port is accessible
+            if ($this->isPortInUse($this->config->localPort)) {
+                $connected = true;
                 break;
             }
-            if (!$this->process->isRunning()) {
-                break;
-            }
-            sleep(1);
         }
 
-        if (!$portReady) {
-            $processRunning = $this->process->isRunning();
-            $stderr = $this->process->getErrorOutput();
+        if (!$connected) {
             $this->stop();
             throw new TunnelConnectionException(
-                "SSH tunnel started but port {$this->config->localPort} is not accessible" .
-                " (process running: " . ($processRunning ? 'yes' : 'no') .
-                ", attempts: {$maxPortChecks}" .
-                ($stderr ? ", stderr: {$stderr}" : '') . ")"
+                "SSH tunnel started but port {$this->config->localPort} is not accessible after {$maxWait}s"
             );
         }
 

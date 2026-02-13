@@ -39,6 +39,10 @@ return [
         // Timeout for port accessibility checks in seconds
         'port_timeout' => env('TUNNEL_VALIDATION_PORT_TIMEOUT', 1),
 
+        // Maximum attempts to wait for port to become accessible after tunnel start (1 attempt = 1 second).
+        // Increase for SSH agents with interactive confirmation (Secretive, Touch ID).
+        'port_max_attempts' => env('TUNNEL_VALIDATION_PORT_MAX_ATTEMPTS', 10),
+
         // Timeout for database connection checks in seconds
         'database_timeout' => env('TUNNEL_VALIDATION_DATABASE_TIMEOUT', 5),
 
